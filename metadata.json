@@ -1,0 +1,7 @@
+{
+  "name": "Sling Puck Pro: Tournament Edition",
+  "description": "A high-stakes, physics-based sling puck game featuring real-time multiplayer simulation, tournament brackets, AI competitors, and Gemini Live voice commentary.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
