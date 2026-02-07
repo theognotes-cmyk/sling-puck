@@ -67,7 +67,7 @@ const createInitialGameState = (p1Id: string, p2Id: string): GameState => {
 };
 
 const App: React.FC = () => {
-  const [view, setView] = useState<'HOME' | 'LOBBY' | 'MATCH' | 'TOURNAMENT_OVER'>('HOME');
+  const [view, setView] = useState<'HOME' | 'LOBBY' | 'MATCH' | 'TOURNAMENT_OVER' | 'SEARCHING'>('HOME');
   const [tournament, setTournament] = useState<Tournament | null>(null);
   const [myPlayerId, setMyPlayerId] = useState<string | null>(null);
   const [activeMatch, setActiveMatch] = useState<Match | null>(null);
@@ -86,37 +86,51 @@ const App: React.FC = () => {
   const outputCtxRef = useRef<AudioContext | null>(null);
 
   useEffect(() => {
-    // 1. Initial State Load
     const savedId = localStorage.getItem('sling_puck_player_id');
     const savedName = localStorage.getItem('sling_puck_player_name');
     if (savedId) setMyPlayerId(savedId);
     if (savedName) setUserName(savedName);
 
-    // 2. Handle Direct Invite Links
     const params = new URLSearchParams(window.location.search);
     const room = params.get('room')?.toUpperCase();
     if (room) {
-      const t = multiplayer.getTournamentByCode(room);
-      if (t) {
-        setTournament(t);
-        const result = multiplayer.joinTournament(room, savedName || userName, savedId || undefined);
-        if (result) {
-          setMyPlayerId(result.playerId);
-          localStorage.setItem('sling_puck_player_id', result.playerId);
-          setView('LOBBY');
+      setView('SEARCHING');
+      // Ask other tabs if they have this room
+      multiplayer.requestDiscovery(room);
+
+      // Wait a bit for discovery to respond
+      const timer = setTimeout(() => {
+        const t = multiplayer.getTournamentByCode(room);
+        if (t) {
+          setTournament(t);
+          const result = multiplayer.joinTournament(room, savedName || userName, savedId || undefined);
+          if (result) {
+            setMyPlayerId(result.playerId);
+            localStorage.setItem('sling_puck_player_id', result.playerId);
+            setView('LOBBY');
+          } else {
+            alert("Room " + room + " is full or locked.");
+            setView('HOME');
+          }
         } else {
-          alert("Could not join room " + room + ". It may be full or locked.");
+          alert("Invite Room " + room + " not found or host is offline!");
           window.history.replaceState({}, '', window.location.pathname);
+          setView('HOME');
         }
-      } else {
-        alert("Invite Room " + room + " not found!");
-        window.history.replaceState({}, '', window.location.pathname);
-      }
+      }, 1500); // 1.5s discovery window
+
+      return () => clearTimeout(timer);
     }
   }, []);
 
   useEffect(() => {
     const unsubscribeT = multiplayer.subscribe((updatedT) => {
+      // If we were searching and found the room, we'll update automatically
+      if (view === 'SEARCHING') {
+        // No immediate setView('LOBBY') here, let the timeout above handle the join logic
+        return;
+      }
+      
       if (tournament && updatedT.id === tournament.id) {
         setTournament(updatedT);
         if (activeMatch) {
@@ -138,7 +152,7 @@ const App: React.FC = () => {
       }
     });
     return unsubscribeT;
-  }, [tournament, activeMatch, myPlayerId]);
+  }, [tournament, activeMatch, myPlayerId, view]);
 
   const handleCreateTournament = () => {
     const t = multiplayer.createTournament(tName, pCount, userName, difficulty);
@@ -160,7 +174,9 @@ const App: React.FC = () => {
       setView('LOBBY');
       window.history.replaceState({}, '', `?room=${result.tournament.roomCode}`);
     } else {
-      alert("No Room Found or Locked for code: " + cleanCode);
+      // If not found, try discovery once
+      multiplayer.requestDiscovery(cleanCode);
+      alert("Searching for room " + cleanCode + "... Try clicking join again in 1 second.");
     }
   };
 
@@ -176,7 +192,7 @@ const App: React.FC = () => {
         window.history.replaceState({}, '', `?room=${result.tournament.roomCode}`);
       }
     } else {
-      alert("No public rooms available right now. Why not host one?");
+      alert("No public rooms available right now.");
     }
   };
 
@@ -274,7 +290,6 @@ const App: React.FC = () => {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-8 w-full max-w-5xl">
-        {/* JOIN BOX */}
         <div className="bg-slate-900/60 p-10 rounded-[3rem] border-2 border-slate-800 shadow-2xl flex flex-col">
           <h2 className="text-3xl font-oswald mb-8 italic uppercase tracking-wider text-slate-400">JOIN ARENA</h2>
           <div className="space-y-6">
@@ -305,7 +320,6 @@ const App: React.FC = () => {
           </div>
         </div>
 
-        {/* CREATE BOX */}
         <div className="bg-slate-900/60 p-10 rounded-[3rem] border-2 border-slate-800 shadow-2xl flex flex-col">
           <h2 className="text-3xl font-oswald mb-8 italic uppercase tracking-wider text-slate-400">HOST ARENA</h2>
           <div className="space-y-6">
@@ -400,7 +414,6 @@ const App: React.FC = () => {
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-          {/* RANKINGS */}
           <div className="lg:col-span-3 bg-slate-900/40 p-10 rounded-[3rem] border-2 border-slate-800 h-fit backdrop-blur-sm">
             <h3 className="text-xs font-black text-slate-600 uppercase mb-8 border-b border-slate-800 pb-3 tracking-widest">LEADERBOARD</h3>
             <div className="space-y-4">
@@ -418,7 +431,6 @@ const App: React.FC = () => {
             </div>
           </div>
 
-          {/* PROGRESSION */}
           <div className="lg:col-span-9 space-y-8">
             <div className="flex justify-between items-center px-4">
                <h3 className="text-xs font-black text-slate-600 uppercase tracking-widest">BRACKETS (ROUND {tournament?.currentRound})</h3>
@@ -485,6 +497,13 @@ const App: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-slate-950 overflow-x-hidden">
+      {view === 'SEARCHING' && (
+        <div className="min-h-screen flex flex-col items-center justify-center p-8 bg-slate-950 text-white">
+          <div className="text-6xl animate-bounce mb-8">🔍</div>
+          <h2 className="text-4xl font-oswald font-black uppercase italic text-amber-500">Searching for Arena...</h2>
+          <p className="text-slate-500 mt-4 font-black text-xs tracking-widest">CONNECTING TO HOST</p>
+        </div>
+      )}
       {view === 'HOME' && renderHome()}
       {view === 'LOBBY' && renderLobby()}
       {view === 'MATCH' && (

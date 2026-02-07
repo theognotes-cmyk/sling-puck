@@ -17,19 +17,28 @@ class MultiplayerService {
   private onVoiceListeners: ((data: { senderId: string, pcm: string }) => void)[] = [];
 
   constructor() {
-    // Unique channel names to prevent conflicts with old versions
-    this.channel = new BroadcastChannel('sling-puck-multiplayer-v5');
-    this.matchChannel = new BroadcastChannel('sling-puck-match-state-v5');
-    this.voiceChannel = new BroadcastChannel('sling-puck-voice-v5');
+    this.channel = new BroadcastChannel('sling-puck-multiplayer-v6');
+    this.matchChannel = new BroadcastChannel('sling-puck-match-state-v6');
+    this.voiceChannel = new BroadcastChannel('sling-puck-voice-v6');
 
     this.channel.onmessage = (event) => {
-      if (event.data?.type === 'STATE_UPDATE') {
-        const updatedTournament = event.data.tournament as Tournament;
-        // When we receive an update from another tab, save it locally too
+      const data = event.data;
+      if (!data) return;
+
+      if (data.type === 'STATE_UPDATE') {
+        const updatedTournament = data.tournament as Tournament;
         this.saveLocalSilent(updatedTournament);
         this.notifyListeners(updatedTournament);
-      } else if (event.data?.type === 'CHAT_MESSAGE') {
-        this.onChatListeners.forEach(l => l(event.data.message));
+      } else if (data.type === 'DISCOVERY_REQUEST') {
+        // Someone is looking for a room. If I have it, I broadcast it.
+        const roomCode = data.roomCode?.toUpperCase();
+        const t = this.getTournamentByCode(roomCode);
+        if (t) {
+          console.log("Multiplayer: Responding to discovery request for", roomCode);
+          this.broadcast(t);
+        }
+      } else if (data.type === 'CHAT_MESSAGE') {
+        this.onChatListeners.forEach(l => l(data.message));
       }
     };
 
@@ -70,7 +79,7 @@ class MultiplayerService {
     } else {
       delete publicRooms[code];
     }
-    localStorage.setItem('public_tournaments_v5', JSON.stringify(publicRooms));
+    localStorage.setItem('public_tournaments_v6', JSON.stringify(publicRooms));
   }
 
   private saveLocal(t: Tournament) {
@@ -79,7 +88,7 @@ class MultiplayerService {
   }
 
   private getPublicRooms(): Record<string, string> {
-    const data = localStorage.getItem('public_tournaments_v5');
+    const data = localStorage.getItem('public_tournaments_v6');
     return data ? JSON.parse(data) : {};
   }
 
@@ -109,6 +118,11 @@ class MultiplayerService {
         this.onMatchStateListeners.set(matchId, listeners.filter(l => l !== callback));
       }
     };
+  }
+
+  requestDiscovery(roomCode: string) {
+    console.log("Multiplayer: Requesting discovery for code", roomCode);
+    this.channel.postMessage({ type: 'DISCOVERY_REQUEST', roomCode: roomCode.toUpperCase() });
   }
 
   createTournament(name: string, playerCount: number, creatorName: string, difficulty: AIDifficulty = AIDifficulty.MEDIUM): Tournament {
@@ -150,25 +164,15 @@ class MultiplayerService {
 
   joinTournament(roomCode: string, playerName: string, existingId?: string): { tournament: Tournament, playerId: string } | null {
     const t = this.getTournamentByCode(roomCode);
-    if (!t) {
-      console.warn("Multiplayer: No room found for code", roomCode);
-      return null;
-    }
+    if (!t) return null;
     
-    // Allow re-joining if already in player list
     const existing = existingId ? t.players.find(p => p.id === existingId) : null;
-    if (t.isLocked && !existing) {
-      console.warn("Multiplayer: Room is locked");
-      return null;
-    }
+    if (t.isLocked && !existing) return null;
 
     let playerId = existingId || 'player_' + Math.random().toString(36).substring(2, 7);
     
     if (!existing) {
-      if (t.players.length >= t.maxPlayers || t.status !== TournamentStatus.LOBBY) {
-        console.warn("Multiplayer: Room full or already started");
-        return null;
-      }
+      if (t.players.length >= t.maxPlayers || t.status !== TournamentStatus.LOBBY) return null;
       t.players.push({ id: playerId, name: playerName, type: PlayerType.HUMAN, status: PlayerStatus.READY, score: 0 });
     }
 
@@ -190,7 +194,6 @@ class MultiplayerService {
     const t = this.getTournamentByCode(roomCode);
     if (!t) return;
 
-    // Fill with AI if not full
     while (t.players.length < t.maxPlayers) {
       t.players.push({
         id: `ai_${Math.random().toString(36).substring(2, 5)}`,
