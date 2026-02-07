@@ -38,7 +38,7 @@ export interface Puck {
   pos: Vector;
   vel: Vector;
   radius: number;
-  ownerId: string; // The side it belongs to initially
+  ownerId: string;
   color: string;
 }
 
@@ -54,7 +54,7 @@ export interface Player {
 export interface Match {
   id: string;
   round: number;
-  players: [string, string]; // Player IDs
+  players: [string, string];
   winnerId?: string;
   status: MatchStatus;
   spectators: string[];
@@ -62,6 +62,7 @@ export interface Match {
 
 export interface Tournament {
   id: string;
+  roomCode: string; // 6-digit alphanumeric code
   name: string;
   creatorId: string;
   maxPlayers: number;
@@ -70,6 +71,8 @@ export interface Tournament {
   status: TournamentStatus;
   currentRound: number;
   difficulty: AIDifficulty;
+  isLocked: boolean; // If true, no one can join even with the code
+  isPrivate: boolean; // If true, won't show up in random join
 }
 
 export interface GameState {
@@ -79,6 +82,6 @@ export interface GameState {
   timer: number;
   isPaused: boolean;
   winnerId?: string;
-  isOpeningMove1: boolean; // Tracking opening move for player 1
-  isOpeningMove2: boolean; // Tracking opening move for player 2
+  isOpeningMove1: boolean;
+  isOpeningMove2: boolean;
 }
