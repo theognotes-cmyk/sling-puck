@@ -1,6 +1,4 @@
-
 import React, { useState, useEffect, useRef } from 'react';
-// Added PlayerType to the imports from types.ts
 import { Tournament, TournamentStatus, Player, Match, MatchStatus, GameState, Puck, PlayerStatus, AIDifficulty, PlayerType } from './types';
 import { multiplayer } from './services/MultiplayerService';
 import { BOARD_WIDTH, BOARD_HEIGHT, PUCK_RADIUS, COLORS, PUCKS_PER_PLAYER } from './constants';
@@ -88,23 +86,31 @@ const App: React.FC = () => {
   const outputCtxRef = useRef<AudioContext | null>(null);
 
   useEffect(() => {
+    // 1. Initial State Load
     const savedId = localStorage.getItem('sling_puck_player_id');
     const savedName = localStorage.getItem('sling_puck_player_name');
     if (savedId) setMyPlayerId(savedId);
     if (savedName) setUserName(savedName);
 
+    // 2. Handle Direct Invite Links
     const params = new URLSearchParams(window.location.search);
-    const room = params.get('room');
+    const room = params.get('room')?.toUpperCase();
     if (room) {
       const t = multiplayer.getTournamentByCode(room);
       if (t) {
         setTournament(t);
-        const result = multiplayer.joinTournament(room, userName, savedId || undefined);
+        const result = multiplayer.joinTournament(room, savedName || userName, savedId || undefined);
         if (result) {
           setMyPlayerId(result.playerId);
           localStorage.setItem('sling_puck_player_id', result.playerId);
           setView('LOBBY');
+        } else {
+          alert("Could not join room " + room + ". It may be full or locked.");
+          window.history.replaceState({}, '', window.location.pathname);
         }
+      } else {
+        alert("Invite Room " + room + " not found!");
+        window.history.replaceState({}, '', window.location.pathname);
       }
     }
   }, []);
@@ -145,7 +151,8 @@ const App: React.FC = () => {
 
   const handleJoinByCode = () => {
     if (!joinCodeInput) return;
-    const result = multiplayer.joinTournament(joinCodeInput.toUpperCase(), userName, myPlayerId || undefined);
+    const cleanCode = joinCodeInput.trim().toUpperCase();
+    const result = multiplayer.joinTournament(cleanCode, userName, myPlayerId || undefined);
     if (result) {
       setTournament(result.tournament);
       setMyPlayerId(result.playerId);
@@ -153,7 +160,7 @@ const App: React.FC = () => {
       setView('LOBBY');
       window.history.replaceState({}, '', `?room=${result.tournament.roomCode}`);
     } else {
-      alert("Room not found or locked!");
+      alert("No Room Found or Locked for code: " + cleanCode);
     }
   };
 
@@ -169,7 +176,7 @@ const App: React.FC = () => {
         window.history.replaceState({}, '', `?room=${result.tournament.roomCode}`);
       }
     } else {
-      alert("No public rooms available!");
+      alert("No public rooms available right now. Why not host one?");
     }
   };
 
@@ -199,6 +206,7 @@ const App: React.FC = () => {
     setTournament(null);
     setActiveMatch(null);
     setLocalGameState(null);
+    setJoinCodeInput('');
     setView('HOME');
   };
 
@@ -373,7 +381,7 @@ const App: React.FC = () => {
             <button 
               onClick={() => { 
                 navigator.clipboard.writeText(inviteLink); 
-                alert(`Invite Link Copied: ${inviteLink}`); 
+                alert(`Invite Link Copied!\n\n${inviteLink}\n\nPlayers can now join directly!`); 
               }} 
               className="bg-amber-500 text-slate-950 px-10 py-5 rounded-2xl text-sm font-black uppercase shadow-lg shadow-amber-500/20 hover:scale-105 active:scale-95 transition-all italic"
             >
@@ -382,7 +390,7 @@ const App: React.FC = () => {
             <button 
               onClick={() => { 
                 navigator.clipboard.writeText(tournament?.roomCode || ''); 
-                alert(`Code ${tournament?.roomCode} copied to clipboard!`); 
+                alert(`Room Code ${tournament?.roomCode} copied to clipboard!`); 
               }} 
               className="bg-slate-800 text-white px-10 py-5 rounded-2xl text-sm font-black uppercase shadow-lg border border-slate-700 hover:bg-slate-700 active:scale-95 transition-all"
             >
@@ -434,13 +442,11 @@ const App: React.FC = () => {
                     <div className="flex items-center justify-between gap-8 mb-10 text-center">
                       <div className="flex flex-col flex-1 items-center">
                         <span className={`text-2xl font-oswald font-black uppercase truncate w-full ${m.winnerId === p1?.id ? 'text-green-500' : 'text-white'}`}>{p1?.name}</span>
-                        {/* PlayerType is now properly imported */}
                         <span className="text-[10px] font-black text-slate-600 uppercase mt-1">{p1?.type === PlayerType.AI ? 'BOT' : 'PLAYER'}</span>
                       </div>
                       <div className="text-slate-700 font-black italic text-3xl opacity-50">VS</div>
                       <div className="flex flex-col flex-1 items-center">
                         <span className={`text-2xl font-oswald font-black uppercase truncate w-full ${m.winnerId === p2?.id ? 'text-green-500' : 'text-white'}`}>{p2?.name}</span>
-                        {/* PlayerType is now properly imported */}
                         <span className="text-[10px] font-black text-slate-600 uppercase mt-1">{p2?.type === PlayerType.AI ? 'BOT' : 'PLAYER'}</span>
                       </div>
                     </div>
@@ -523,7 +529,11 @@ const App: React.FC = () => {
               <span className="text-4xl">{isVoiceActive ? '🎙️' : '🎤'}</span>
             </button>
             <button 
-              onClick={() => setView('LOBBY')} 
+              onClick={() => {
+                setActiveMatch(null);
+                setLocalGameState(null);
+                setView('LOBBY');
+              }} 
               className="px-12 py-6 bg-slate-800 text-slate-400 font-black uppercase tracking-widest text-xs border-2 border-slate-700 rounded-full hover:bg-slate-700 hover:text-white transition-all shadow-xl"
             >
               EXIT TO BRACKETS

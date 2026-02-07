@@ -17,14 +17,16 @@ class MultiplayerService {
   private onVoiceListeners: ((data: { senderId: string, pcm: string }) => void)[] = [];
 
   constructor() {
-    this.channel = new BroadcastChannel('sling-puck-multiplayer-v4');
-    this.matchChannel = new BroadcastChannel('sling-puck-match-state-v4');
-    this.voiceChannel = new BroadcastChannel('sling-puck-voice-v4');
+    // Unique channel names to prevent conflicts with old versions
+    this.channel = new BroadcastChannel('sling-puck-multiplayer-v5');
+    this.matchChannel = new BroadcastChannel('sling-puck-match-state-v5');
+    this.voiceChannel = new BroadcastChannel('sling-puck-voice-v5');
 
     this.channel.onmessage = (event) => {
       if (event.data?.type === 'STATE_UPDATE') {
         const updatedTournament = event.data.tournament as Tournament;
-        this.saveLocal(updatedTournament);
+        // When we receive an update from another tab, save it locally too
+        this.saveLocalSilent(updatedTournament);
         this.notifyListeners(updatedTournament);
       } else if (event.data?.type === 'CHAT_MESSAGE') {
         this.onChatListeners.forEach(l => l(event.data.message));
@@ -57,21 +59,27 @@ class MultiplayerService {
     return code;
   }
 
-  private saveLocal(t: Tournament) {
-    localStorage.setItem(`tournament_code_${t.roomCode}`, JSON.stringify(t));
+  private saveLocalSilent(t: Tournament) {
+    const code = t.roomCode.toUpperCase();
+    localStorage.setItem(`tournament_code_${code}`, JSON.stringify(t));
     localStorage.setItem(`tournament_id_${t.id}`, JSON.stringify(t));
     
     const publicRooms = this.getPublicRooms();
     if (!t.isPrivate && !t.isLocked && t.players.length < t.maxPlayers && t.status === TournamentStatus.LOBBY) {
-      publicRooms[t.roomCode] = t.id;
+      publicRooms[code] = t.id;
     } else {
-      delete publicRooms[t.roomCode];
+      delete publicRooms[code];
     }
-    localStorage.setItem('public_tournaments_v4', JSON.stringify(publicRooms));
+    localStorage.setItem('public_tournaments_v5', JSON.stringify(publicRooms));
+  }
+
+  private saveLocal(t: Tournament) {
+    this.saveLocalSilent(t);
+    this.broadcast(t);
   }
 
   private getPublicRooms(): Record<string, string> {
-    const data = localStorage.getItem('public_tournaments_v4');
+    const data = localStorage.getItem('public_tournaments_v5');
     return data ? JSON.parse(data) : {};
   }
 
@@ -103,17 +111,6 @@ class MultiplayerService {
     };
   }
 
-  broadcastVoice(senderId: string, base64Pcm: string) {
-    this.voiceChannel.postMessage({ type: 'VOICE_DATA', senderId, pcm: base64Pcm });
-  }
-
-  subscribeVoice(callback: (data: { senderId: string, pcm: string }) => void) {
-    this.onVoiceListeners.push(callback);
-    return () => {
-      this.onVoiceListeners = this.onVoiceListeners.filter(l => l !== callback);
-    };
-  }
-
   createTournament(name: string, playerCount: number, creatorName: string, difficulty: AIDifficulty = AIDifficulty.MEDIUM): Tournament {
     const id = 't_' + Math.random().toString(36).substring(2, 9);
     const roomCode = this.generateRoomCode();
@@ -122,7 +119,7 @@ class MultiplayerService {
     const tournament: Tournament = {
       id,
       roomCode,
-      name: name || "New Tournament",
+      name: name || "Elite Tournament",
       creatorId,
       maxPlayers: playerCount,
       players: [{ id: creatorId, name: creatorName, type: PlayerType.HUMAN, status: PlayerStatus.READY, score: 0 }],
@@ -135,11 +132,11 @@ class MultiplayerService {
     };
 
     this.saveLocal(tournament);
-    this.broadcast(tournament);
     return tournament;
   }
 
   getTournamentByCode(code: string): Tournament | null {
+    if (!code) return null;
     const data = localStorage.getItem(`tournament_code_${code.toUpperCase()}`);
     return data ? JSON.parse(data) : null;
   }
@@ -153,21 +150,29 @@ class MultiplayerService {
 
   joinTournament(roomCode: string, playerName: string, existingId?: string): { tournament: Tournament, playerId: string } | null {
     const t = this.getTournamentByCode(roomCode);
-    if (!t) return null;
+    if (!t) {
+      console.warn("Multiplayer: No room found for code", roomCode);
+      return null;
+    }
     
     // Allow re-joining if already in player list
     const existing = existingId ? t.players.find(p => p.id === existingId) : null;
-    if (t.isLocked && !existing) return null;
+    if (t.isLocked && !existing) {
+      console.warn("Multiplayer: Room is locked");
+      return null;
+    }
 
     let playerId = existingId || 'player_' + Math.random().toString(36).substring(2, 7);
     
     if (!existing) {
-      if (t.players.length >= t.maxPlayers || t.status !== TournamentStatus.LOBBY) return null;
+      if (t.players.length >= t.maxPlayers || t.status !== TournamentStatus.LOBBY) {
+        console.warn("Multiplayer: Room full or already started");
+        return null;
+      }
       t.players.push({ id: playerId, name: playerName, type: PlayerType.HUMAN, status: PlayerStatus.READY, score: 0 });
     }
 
     this.saveLocal(t);
-    this.broadcast(t);
     return { tournament: t, playerId };
   }
 
@@ -176,7 +181,6 @@ class MultiplayerService {
     if (t) {
       t.isLocked = !t.isLocked;
       this.saveLocal(t);
-      this.broadcast(t);
       return t;
     }
     return null;
@@ -186,7 +190,7 @@ class MultiplayerService {
     const t = this.getTournamentByCode(roomCode);
     if (!t) return;
 
-    // Fill with AI
+    // Fill with AI if not full
     while (t.players.length < t.maxPlayers) {
       t.players.push({
         id: `ai_${Math.random().toString(36).substring(2, 5)}`,
@@ -204,7 +208,6 @@ class MultiplayerService {
     t.matches = this.generateMatches(t.players, 1);
     
     this.saveLocal(t);
-    this.broadcast(t);
   }
 
   updateMatchResult(roomCode: string, matchId: string, winnerId: string) {
@@ -242,7 +245,6 @@ class MultiplayerService {
       }
 
       this.saveLocal(t);
-      this.broadcast(t);
     }
   }
 
